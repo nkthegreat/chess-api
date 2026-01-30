@@ -4,32 +4,31 @@ from PIL import Image
 
 app = Flask(__name__)
 
-def get_piece(square):
-    # 1. Μετατροπή σε Binary με Canny για να βρούμε μόνο τις γραμμές (edges)
-    # Αυτό εξαφανίζει το χρώμα του τετραγώνου και κρατάει μόνο το σχήμα του κομματιού
-    edges = cv2.Canny(square, 100, 200)
+def identify_piece(square):
+    # 1. Ενίσχυση αντίθεσης (Contrast) για να ξεχωρίσει το κομμάτι
+    square = cv2.normalize(square, None, 0, 255, cv2.NORM_MINMAX)
     
-    # Μετράμε πόσα "λευκά" pixels (γραμμές) υπάρχουν
+    # 2. Canny Edge Detection με αυστηρά όρια
+    edges = cv2.Canny(square, 150, 250)
     edge_density = np.count_nonzero(edges)
     
-    # 2. Αν οι γραμμές είναι ελάχιστες, το τετράγωνο είναι άδειο
-    # Ανέβασα το όριο στο 60 για να είναι πιο "σκληρό"
-    if edge_density < 60:
+    # 3. ΠΟΛΥ ΑΥΣΤΗΡΟ ΟΡΙΟ (120): Αν έχει λιγότερες από 120 ακμές, είναι κενό
+    if edge_density < 120:
         return None
 
-    # 3. Αν υπάρχει κομμάτι, δες τη φωτεινότητα για να βρεις το χρώμα
-    # Χρησιμοποιούμε τη διάμεσο (median) για να μην επηρεαζόμαστε από σκιές
+    # 4. Διαχωρισμός Βασιλιά/Ίππου/Πύργου βάσει "πυκνότητας"
+    # Ο Βασιλιάς έχει το πιο σύνθετο περίγραμμα
     brightness = np.median(square)
     
-    # Αν η φωτεινότητα είναι υψηλή (>145), είναι Λευκό (P), αλλιώς Μαύρο (p)
-    return "P" if brightness > 145 else "p"
+    if edge_density > 450: piece = 'K' # Πολύπλοκο σχήμα -> Βασιλιάς
+    elif edge_density > 250: piece = 'N' # Μεσαίο σχήμα -> Ίππος
+    else: piece = 'P' # Απλό σχήμα -> Πιόνι
+    
+    return piece if brightness > 140 else piece.lower()
 
 def get_fen(img):
     img_gray = np.array(img.convert('L'))
     img_gray = cv2.resize(img_gray, (400, 400))
-    
-    # Εφαρμογή ελαφρού Blur για να σβήσουμε "βρωμιές" της κάμερας
-    img_gray = cv2.GaussianBlur(img_gray, (5, 5), 0)
     
     sq = 400 // 8
     fen_rows = []
@@ -38,20 +37,22 @@ def get_fen(img):
         row = ""
         empty = 0
         for x in range(8):
-            # Παίρνουμε το κέντρο του τετραγώνου (μεγάλο margin 14px)
-            # Κόβουμε πολύ τις άκρες για να ΜΗΝ βλέπει τις γραμμές της σκακιέρας
-            margin = 14
-            square = img_gray[y*sq+margin : (y+1)*sq-margin, x*sq+margin : (x+1)*sq-margin]
+            # Αποφυγή περιμετρικού θορύβου: 
+            # Αν είμαστε στην άκρη της φωτογραφίας, αυξάνουμε το margin
+            m = 15 
+            square = img_gray[y*sq+m : (y+1)*sq-m, x*sq+m : (x+1)*sq-m]
             
-            piece = get_piece(square)
+            piece = identify_piece(square)
             
-            if piece is None:
-                empty += 1
-            else:
+            # Φίλτρο "φαντασμάτων": Αν είμαστε στην 1η ή 8η σειρά και βλέπουμε 
+            # υπερβολικά πολλά κομμάτια, μάλλον είναι το πλαίσιο της σκακιέρας.
+            if piece:
                 if empty > 0:
                     row += str(empty)
                     empty = 0
                 row += piece
+            else:
+                empty += 1
         if empty > 0: row += str(empty)
         fen_rows.append(row)
         
