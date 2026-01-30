@@ -4,27 +4,53 @@ from PIL import Image
 
 app = Flask(__name__)
 
-def identify_piece_2d(square):
-    # Μετατροπή σε γκρι και ελαφρύ Blur για να σβήσουν τα pixels της οθόνης
-    square = cv2.GaussianBlur(square, (5, 5), 0)
+
+   def identify_piece_2d(square):
+    # 1. Κανονικοποίηση
+    square = cv2.normalize(square, None, 0, 255, cv2.NORM_MINMAX)
     
-    # Παίρνουμε το χρώμα των άκρων (το χρώμα του τετραγώνου) 
-    # και το χρώμα του κέντρου (εκεί που θα είναι το κομμάτι)
-    h, w = square.shape
-    edge_color = np.median(np.concatenate([square[0,:], square[-1,:], square[:,0], square[:,1]]))
-    center_area = square[h//4:3*h//4, w//4:3*w//4]
-    center_color = np.median(center_area)
-    
-    # Υπολογίζουμε τη διαφορά
-    diff = abs(center_color - edge_color)
-    
-    # Αν η διαφορά είναι μικρή, το τετράγωνο είναι άδειο
-    if diff < 25: 
+    # 2. Χρησιμοποιούμε Canny Edge Detection αντί για σκέτο STD
+    # Οι ακμές (edges) είναι πιο αξιόπιστες από τη διακύμανση
+    edges = cv2.Canny(square, 100, 200)
+    edge_density = np.count_nonzero(edges)
+
+    # ΑΥΣΤΗΡΟ ΦΙΛΤΡΟ: Αν οι ακμές είναι λίγες, το τετράγωνο είναι άδειο
+    # Δοκίμασε το 100. Αν βλέπεις ακόμα "φαντάσματα", πήγαινέ το στο 150.
+    if edge_density < 100: 
         return None
 
-    # Αν η διαφορά είναι μεγάλη, έχουμε κομμάτι. 
-    # Αν το κέντρο είναι πολύ φωτεινό (>160), είναι Λευκό (P), αλλιώς Μαύρο (p)
-    return 'P' if center_color > 160 else 'p'
+    # 3. Ανίχνευση χρώματος
+    mean = np.mean(square)
+    return 'P' if mean > 160 else 'p'
+
+def get_fen(img):
+    img_gray = np.array(img.convert('L'))
+    img_gray = cv2.resize(img_gray, (400, 400))
+    
+    # ΕΔΩ Η ΑΛΛΑΓΗ: Median Blur για να σβήσουμε τα pixels της οθόνης
+    img_gray = cv2.medianBlur(img_gray, 5)
+    
+    sq = 400 // 8
+    fen_rows = []
+    
+    for y in range(8):
+        row = ""
+        empty = 0
+        for x in range(8):
+            # Αυξάνουμε λίγο το margin στο 12 για να "κόψουμε" τις γραμμές της σκακιέρας
+            m = 12
+            square = img_gray[y*sq+m : (y+1)*sq-m, x*sq+m : (x+1)*sq-m]
+            piece = identify_piece_2d(square)
+            
+            if piece is None:
+                empty += 1
+            else:
+                if empty > 0: row += str(empty); empty = 0
+                row += piece
+        if empty > 0: row += str(empty)
+        fen_rows.append(row)
+        
+    return "/".join(fen_rows) + " w - - 0 1"
 
 def get_fen(img):
     img_gray = np.array(img.convert('L'))
@@ -63,3 +89,4 @@ def predict():
 
 if __name__ == '__main__':
     app.run()
+
