@@ -1,43 +1,36 @@
 import base64, io, numpy as np, cv2
 from flask import Flask, request, jsonify
 from PIL import Image
-from skimage.metrics import structural_similarity as ssim
 
 app = Flask(__name__)
 
-def detect_piece_ai(square):
-    # 1. Προετοιμασία
-    square = cv2.resize(square, (32, 32))
+def get_piece_type(square):
+    # Μετατροπή σε Binary για να δούμε το "σώμα" του κομματιού
+    _, thresh = cv2.threshold(square, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     
-    # 2. Υπολογισμός "πολυπλοκότητας" (Entropy-based)
-    # Τα κενά τετράγωνα έχουν πολύ υψηλή ομοιότητα με τον εαυτό τους αν μετατοπιστούν
-    shift_x = np.roll(square, 2, axis=1)
-    similarity = ssim(square, shift_x)
+    # Υπολογισμός λευκών pixels (το κομμάτι) προς το σύνολο
+    pixels = np.count_nonzero(thresh)
     
-    # Αν η ομοιότητα είναι πάνω από 0.9, το τετράγωνο είναι "βαρετό" (άδειο)
-    if similarity > 0.85:
-        return None
-
-    # 3. Ταξινόμηση βάσει κατανομής φωτεινότητας (Histogram Features)
-    hist = cv2.calcHist([square], [0], None, [256], [0, 256])
-    mean_val = np.mean(square)
+    # AI Logic βασισμένο σε γεωμετρικά χαρακτηριστικά
+    if pixels < 100: return None # Κενό
     
-    # AI Logic: Τα λευκά κομμάτια έχουν "κορυφές" στο δεξί μέρος του ιστογράμματος
-    if mean_val > 150:
-        # Λευκό - έστω Πιόνι για αρχή, αλλά με AI δομή
-        return "P"
-    else:
-        # Μαύρο
-        return "p"
+    brightness = np.median(square[thresh > 0])
+    
+    # Ταξινόμηση βάσει πυκνότητας (Density Analysis)
+    if pixels > 800: piece = 'Q' # Η Βασίλισσα "πιάνει" πολύ χώρο
+    elif pixels > 600: piece = 'K' # Ο Βασιλιάς είναι ψηλός
+    elif pixels > 400: piece = 'N' # Ο Ίππος έχει περίεργο σχήμα
+    else: piece = 'P' # Τα πιόνια είναι μικρά
+    
+    return piece if brightness > 140 else piece.lower()
 
 def get_fen(img):
-    img_gray = np.array(img.convert('L'))
-    img_gray = cv2.resize(img_gray, (400, 400))
+    # 1. Pre-processing για οθόνες Lichess
+    img_np = np.array(img.convert('L'))
+    img_np = cv2.resize(img_np, (400, 400))
     
-    # AI Pre-processing: Adaptive Histogram Equalization (CLAHE)
-    # Αυτό κάνει τα κομμάτια να "λάμπουν" ακόμα και σε κακό φωτισμό
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    img_gray = clahe.apply(img_gray)
+    # Adaptive Thresholding για να εξαφανίσουμε τις γυαλάδες της οθόνης
+    img_np = cv2.adaptiveThreshold(img_np, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
     
     sq = 400 // 8
     fen_rows = []
@@ -46,15 +39,18 @@ def get_fen(img):
         row = ""
         empty = 0
         for x in range(8):
+            # Παίρνουμε το τετράγωνο με "ασφάλεια" 10 pixels
             margin = 10
-            square = img_gray[y*sq+m : (y+1)*sq-m, x*sq+m : (x+1)*sq-m]
+            square = img_np[y*sq+margin : (y+1)*sq-margin, x*sq+margin : (x+1)*sq-margin]
             
-            piece = detect_piece_ai(square)
+            piece = get_piece_type(square)
             
             if piece is None:
                 empty += 1
             else:
-                if empty > 0: row += str(empty); empty = 0
+                if empty > 0:
+                    row += str(empty)
+                    empty = 0
                 row += piece
         if empty > 0: row += str(empty)
         fen_rows.append(row)
