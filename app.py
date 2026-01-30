@@ -14,25 +14,22 @@ def get_fen_from_image(img):
         row = ""
         empty = 0
         for x in range(8):
-            # Παίρνουμε το τετράγωνο αλλά "κόβουμε" 5 pixels γύρω-γύρω 
-            # για να μην βλέπει ο αλγόριθμος τις γραμμές της σκακιέρας
-            square = img.crop((x*sq + 5, y*sq + 5, (x+1)*sq - 5, (y+1)*sq - 5))
+            # Μεγαλύτερο περιθώριο (+10 pixels) για να βλέπει μόνο το κέντρο του τετραγώνου
+            square = img.crop((x*sq + 10, y*sq + 10, (x+1)*sq - 10, (y+1)*sq - 10))
             
-            # Μετατροπή σε array για υπολογισμό
             pixels = np.array(square)
             variance = np.var(pixels)
             avg_brightness = np.mean(pixels)
 
-            # ΑΥΞΗΣΗ ΟΡΙΟΥ: Αν η διακύμανση είναι μικρή, το τετράγωνο είναι άδειο
-            # Ανέβασα το όριο στο 300 (από 150) για να είναι πιο αυστηρό
-            if variance < 300: 
+            # ΠΟΛΥ ΠΙΟ ΑΥΣΤΗΡΟ ΟΡΙΟ (1000): Αγνοεί σκιές και υφές
+            if variance < 1000: 
                 empty += 1
             else:
                 if empty > 0:
                     row += str(empty)
                     empty = 0
-                # Αν είναι φωτεινό -> Λευκό Πιόνι (P), αν είναι σκούρο -> Μαύρο (p)
-                row += "P" if avg_brightness > 140 else "p"
+                # Αν είναι πολύ φωτεινό -> Λευκό (P), αλλιώς Μαύρο (p)
+                row += "P" if avg_brightness > 160 else "p"
                     
         if empty > 0:
             row += str(empty)
@@ -53,3 +50,4 @@ def predict():
 
 if __name__ == '__main__':
     app.run()
+
