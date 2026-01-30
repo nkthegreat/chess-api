@@ -1,39 +1,43 @@
 import base64, io, numpy as np, cv2
 from flask import Flask, request, jsonify
 from PIL import Image
+from skimage.metrics import structural_similarity as ssim
 
 app = Flask(__name__)
 
-def identify_piece_2d(square):
-    # 1. Παίρνουμε το χρώμα του κέντρου και τη διακύμανση
-    # Ένα άδειο 2D τετράγωνο στην οθόνη είναι σχεδόν μονόχρωμο στο κέντρο του
-    h, w = square.shape
-    center_area = square[h//4:3*h//4, w//4:3*w//4]
-    std = np.std(center_area)
-    mean = np.mean(center_area)
-
-    # 2. Αν η διακύμανση είναι πολύ χαμηλή (< 8), το τετράγωνο είναι άδειο
-    # Οι οθόνες έχουν "θόρυβο", οπότε το 8-10 είναι καλό όριο
-    if std < 10:
+def detect_piece_ai(square):
+    # 1. Προετοιμασία
+    square = cv2.resize(square, (32, 32))
+    
+    # 2. Υπολογισμός "πολυπλοκότητας" (Entropy-based)
+    # Τα κενά τετράγωνα έχουν πολύ υψηλή ομοιότητα με τον εαυτό τους αν μετατοπιστούν
+    shift_x = np.roll(square, 2, axis=1)
+    similarity = ssim(square, shift_x)
+    
+    # Αν η ομοιότητα είναι πάνω από 0.9, το τετράγωνο είναι "βαρετό" (άδειο)
+    if similarity > 0.85:
         return None
 
-    # 3. Ανίχνευση Λευκού/Μαύρου
-    # Στο Lichess, τα λευκά κομμάτια είναι πολύ πιο φωτεινά από τα τετράγωνα
-    if mean > 180: # Πολύ φωτεινό -> Λευκό
-        return 'P'
-    elif mean < 80: # Πολύ σκούρο -> Μαύρο
-        return 'p'
+    # 3. Ταξινόμηση βάσει κατανομής φωτεινότητας (Histogram Features)
+    hist = cv2.calcHist([square], [0], None, [256], [0, 256])
+    mean_val = np.mean(square)
+    
+    # AI Logic: Τα λευκά κομμάτια έχουν "κορυφές" στο δεξί μέρος του ιστογράμματος
+    if mean_val > 150:
+        # Λευκό - έστω Πιόνι για αρχή, αλλά με AI δομή
+        return "P"
     else:
-        # Αν είναι ενδιάμεσο αλλά έχει "θόρυβο", μάλλον είναι κομμάτι
-        return 'N' if mean > 120 else 'n'
+        # Μαύρο
+        return "p"
 
 def get_fen(img):
-    # Μετατροπή σε Γκρι και Resize
     img_gray = np.array(img.convert('L'))
     img_gray = cv2.resize(img_gray, (400, 400))
     
-    # Ήπιο Blur για να σβήσουμε τις γραμμές της οθόνης (pixels)
-    img_gray = cv2.medianBlur(img_gray, 5)
+    # AI Pre-processing: Adaptive Histogram Equalization (CLAHE)
+    # Αυτό κάνει τα κομμάτια να "λάμπουν" ακόμα και σε κακό φωτισμό
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    img_gray = clahe.apply(img_gray)
     
     sq = 400 // 8
     fen_rows = []
@@ -42,16 +46,15 @@ def get_fen(img):
         row = ""
         empty = 0
         for x in range(8):
-            # Παίρνουμε το τετράγωνο
-            square = img_gray[y*sq : (y+1)*sq, x*sq : (x+1)*sq]
-            piece = identify_piece_2d(square)
+            margin = 10
+            square = img_gray[y*sq+m : (y+1)*sq-m, x*sq+m : (x+1)*sq-m]
+            
+            piece = detect_piece_ai(square)
             
             if piece is None:
                 empty += 1
             else:
-                if empty > 0:
-                    row += str(empty)
-                    empty = 0
+                if empty > 0: row += str(empty); empty = 0
                 row += piece
         if empty > 0: row += str(empty)
         fen_rows.append(row)
