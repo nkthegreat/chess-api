@@ -1,64 +1,34 @@
 from flask import Flask, request, jsonify
-import base64
-import io
+import base64, io
 from PIL import Image, ImageStat
 
 app = Flask(__name__)
 
-def get_piece_at_square(square_img):
-    # Μετατροπή σε ασπρόμαυρο για ανάλυση φωτεινότητας
-    gray_sq = square_img.convert('L')
-    stat = ImageStat.Stat(gray_sq)
-    avg_brightness = stat.mean[0] # Μέση φωτεινότητα
-    std_dev = stat.stddev[0]     # Διακύμανση (δείχνει αν έχει "σχήμα" μέσα)
-
-    # Αν η διακύμανση είναι χαμηλή, το τετράγωνο είναι άδειο
-    if std_dev < 12: 
-        return None
-    
-    # Αν είναι πολύ φωτεινό, θεωρούμε ότι είναι Λευκό κομμάτι (P)
-    # Αν είναι πιο σκούρο, θεωρούμε ότι είναι Μαύρο κομμάτι (p)
-    if avg_brightness > 160:
-        return "P" # Λευκό
-    else:
-        return "p" # Μαύρο
-
-def generate_real_fen(img):
-    img = img.resize((400, 400))
+def get_fen_from_image(img):
+    img = img.resize((400, 400)).convert('L') # Ασπρόμαυρο
     sq = 400 // 8
     fen_rows = []
-    
     for y in range(8):
-        row_string = ""
-        empty_count = 0
+        row = ""
+        empty = 0
         for x in range(8):
-            box = (x * sq, y * sq, (x + 1) * sq, (y + 1) * sq)
-            square = img.crop(box)
-            piece = get_piece_at_square(square)
-            
-            if piece is None:
-                empty_count += 1
+            square = img.crop((x*sq, y*sq, (x+1)*sq, (y+1)*sq))
+            # Αν η διακύμανση είναι πάνω από 15, έχει πιόνι
+            if ImageStat.Stat(square).stddev[0] < 15:
+                empty += 1
             else:
-                if empty_count > 0:
-                    row_string += str(empty_count)
-                    empty_count = 0
-                row_string += piece
-        if empty_count > 0:
-            row_string += str(empty_count)
-        fen_rows.append(row_string)
-            
+                if empty > 0: row += str(empty); empty = 0
+                row += "p" # Θεωρούμε όλα τα κομμάτια "p" για τώρα
+        if empty > 0: row += str(empty)
+        fen_rows.append(row)
     return "/".join(fen_rows) + " w - - 0 1"
 
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
         data = request.get_json()
-        image_data = base64.b64decode(data['image'])
-        img = Image.open(io.BytesIO(image_data))
-        
-        # Παραγωγή πραγματικού FEN βάσει της εικόνας
-        final_fen = generate_real_fen(img)
-        return jsonify({"fen": final_fen})
+        img = Image.open(io.BytesIO(base64.b64decode(data['image'])))
+        return jsonify({"fen": get_fen_from_image(img)})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
