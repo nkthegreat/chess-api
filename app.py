@@ -5,42 +5,49 @@ from PIL import Image, ImageStat
 
 app = Flask(__name__)
 
-def is_square_empty(square_img):
-    # Μετατρέπουμε σε ασπρόμαυρο και υπολογίζουμε τη διακύμανση (Standard Deviation)
-    # Τα κενά τετράγωνα έχουν πολύ χαμηλή διακύμανση χρωμάτων.
-    stat = ImageStat.Stat(square_img.convert('L'))
-    std_dev = stat.stddev[0]
-    # Αν η διακύμανση είναι πάνω από 15, μάλλον έχει πιόνι (δοκίμασε αυτό το νούμερο)
-    return std_dev < 15
+def get_piece_at_square(square_img):
+    # Μετατροπή σε ασπρόμαυρο για ανάλυση φωτεινότητας
+    gray_sq = square_img.convert('L')
+    stat = ImageStat.Stat(gray_sq)
+    avg_brightness = stat.mean[0] # Μέση φωτεινότητα
+    std_dev = stat.stddev[0]     # Διακύμανση (δείχνει αν έχει "σχήμα" μέσα)
 
-def get_fen(img):
+    # Αν η διακύμανση είναι χαμηλή, το τετράγωνο είναι άδειο
+    if std_dev < 12: 
+        return None
+    
+    # Αν είναι πολύ φωτεινό, θεωρούμε ότι είναι Λευκό κομμάτι (P)
+    # Αν είναι πιο σκούρο, θεωρούμε ότι είναι Μαύρο κομμάτι (p)
+    if avg_brightness > 160:
+        return "P" # Λευκό
+    else:
+        return "p" # Μαύρο
+
+def generate_real_fen(img):
     img = img.resize((400, 400))
-    width, height = img.size
-    sq = width // 8
-    fen = ""
+    sq = 400 // 8
+    fen_rows = []
     
     for y in range(8):
+        row_string = ""
         empty_count = 0
         for x in range(8):
             box = (x * sq, y * sq, (x + 1) * sq, (y + 1) * sq)
             square = img.crop(box)
+            piece = get_piece_at_square(square)
             
-            if is_square_empty(square):
+            if piece is None:
                 empty_count += 1
             else:
                 if empty_count > 0:
-                    fen += str(empty_count)
+                    row_string += str(empty_count)
                     empty_count = 0
-                # Εδώ βάζουμε "p" (πιόνι) προσωρινά. 
-                # Σε επόμενο βήμα θα ξεχωρίζουμε αν είναι Βασιλιάς, Πύργος κτλ.
-                fen += "p"
-        
+                row_string += piece
         if empty_count > 0:
-            fen += str(empty_count)
-        if y < 7:
-            fen += "/"
+            row_string += str(empty_count)
+        fen_rows.append(row_string)
             
-    return fen + " w - - 0 1"
+    return "/".join(fen_rows) + " w - - 0 1"
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -49,8 +56,9 @@ def predict():
         image_data = base64.b64decode(data['image'])
         img = Image.open(io.BytesIO(image_data))
         
-        fen_result = get_fen(img)
-        return jsonify({"fen": fen_result})
+        # Παραγωγή πραγματικού FEN βάσει της εικόνας
+        final_fen = generate_real_fen(img)
+        return jsonify({"fen": final_fen})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
