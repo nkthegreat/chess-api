@@ -8,40 +8,33 @@ from PIL import Image
 app = Flask(__name__)
 
 def identify_piece(square_gray):
-    # Μετατροπή σε Binary για να δούμε καθαρά το σχήμα
-    _, thresh = cv2.threshold(square_gray, 128, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    # 1. Καθαρισμός εικόνας
+    square_gray = cv2.GaussianBlur(square_gray, (3, 3), 0)
     
-    # Εύρεση περιγραμμάτων
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 2. Υπολογισμός "ενέργειας" άκρων (Canny edge detection)
+    # Τα κενά τετράγωνα δεν έχουν σχεδόν καθόλου άκρες στο κέντρο τους
+    edges = cv2.Canny(square_gray, 50, 150)
+    edge_count = np.sum(edges > 0)
     
-    if not contours:
-        return None
-    
-    # Βρίσκουμε το μεγαλύτερο αντικείμενο στο τετράγωνο
-    c = max(contours, key=cv2.contourArea)
-    area = cv2.contourArea(c)
-    
-    # Αν το αντικείμενο είναι πολύ μικρό, είναι θόρυβος
-    if area < 100:
+    if edge_count < 40: # Πολύ λίγες άκρες = Κενό τετράγωνο
         return None
 
-    # Υπολογισμός μέσης φωτεινότητας για λευκό/μαύρο
-    avg_brightness = np.mean(square_gray[thresh > 0])
+    # 3. Ανίχνευση αν είναι Λευκό ή Μαύρο βάσει μέσης φωτεινότητας
+    avg_brightness = np.mean(square_gray)
     
-    # Βασική λογική αναγνώρισης βάσει μεγέθους (Area)
-    # Πιόνι: μικρό, Αξιωματικός/Άλογο: μεσαίο, Βασιλιάς/Πύργος: μεγάλο
-    if area > 1500: piece = 'Q' # Μεγάλο σχήμα
-    elif area > 1000: piece = 'R' # Μεσαίο-Μεγάλο
-    elif area > 600: piece = 'N'  # Μεσαίο
-    else: piece = 'P'             # Μικρό
+    # 4. Βασική ταξινόμηση βάσει πυκνότητας άκρων
+    # Ο Βασιλιάς και η Βασίλισσα έχουν πολλές λεπτομέρειες (περισσότερες άκρες)
+    if edge_count > 300: piece = 'Q'
+    elif edge_count > 200: piece = 'R'
+    elif edge_count > 120: piece = 'N'
+    else: piece = 'P'
     
-    # Αν η φωτεινότητα είναι χαμηλή, είναι μαύρο κομμάτι (πεζά γράμματα στο FEN)
     return piece.lower() if avg_brightness < 120 else piece
 
 def get_fen(img):
-    # Μετατροπή σε OpenCV format
-    open_cv_image = np.array(img.convert('L'))
-    open_cv_image = cv2.resize(open_cv_image, (400, 400))
+    # Μετατροπή και Resize
+    img_gray = np.array(img.convert('L'))
+    img_gray = cv2.resize(img_gray, (400, 400))
     
     sq = 400 // 8
     fen_rows = []
@@ -50,8 +43,11 @@ def get_fen(img):
         row = ""
         empty = 0
         for x in range(8):
-            # Παίρνουμε το τετράγωνο με εσωτερικό margin για να αποφύγουμε τις γραμμές
-            square = open_cv_image[y*sq+5 : (y+1)*sq-5, x*sq+5 : (x+1)*sq-5]
+            # Παίρνουμε το κέντρο του τετραγώνου (κόβουμε το 20% των άκρων)
+            # για να μην βλέπουμε ΠΟΤΕ τις γραμμές της σκακιέρας
+            margin = 8
+            square = img_gray[y*sq+margin : (y+1)*sq-margin, x*sq+margin : (x+1)*sq-margin]
+            
             piece = identify_piece(square)
             
             if piece is None:
